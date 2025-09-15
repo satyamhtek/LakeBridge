@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 import sqlparse
 import csv
+import urllib.request  # >>> Added
 
 # -------------------------
 # Setup Logging (file only)
@@ -128,10 +129,18 @@ def process_sql_files(converted_folder: Path, notebooks_folder: Path, metadata_f
 # -------------------------
 def main():
     parser = argparse.ArgumentParser(description="Run Lakebridge Analyze and Convert (Transpile) commands.")
-    parser.add_argument("--config", default="D:/Lakebridge_POC/config.yaml", help="Path to YAML config file")
+    parser.add_argument("--config", default="config.yaml", help="Path to YAML config file")  # >>> changed default
     args = parser.parse_args()
 
-    with open(args.config, "r") as f:
+    # >>> Added: auto-download config.yaml if not found
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"Config file {config_path} not found. Downloading from GitHub...")
+        url = "https://raw.githubusercontent.com/satyamhtek/LakeBridge/main/config.yaml"
+        urllib.request.urlretrieve(url, config_path)
+        print(f"Downloaded default config to {config_path}")
+
+    with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
     source_path = Path(config["source_path"])
