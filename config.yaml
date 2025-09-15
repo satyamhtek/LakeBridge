@@ -1,5 +1,6 @@
-source_path: "D:\\Lakebridge_POC\\Source_Scripts"
-target_path: "D:\\Lakebridge_POC\\Output_Scripts"
+# config.yaml
+source_path: "./Source_Scripts"
+target_path: "./Output_Scripts"
 dialect: "Synapse"
 profile: "lakebridge"
 debug: false
