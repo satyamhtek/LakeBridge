@@ -155,7 +155,7 @@ def main():
     ensure_dirs(metadata_folder)
     log_file = setup_logging(metadata_folder)
 
-    print("\nLakebridge POC script started\n")
+    print("\nLakebridge script started\n")
     check_cli()
     if run_validation:
         validate_input_folder(source_path)
@@ -241,3 +241,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
