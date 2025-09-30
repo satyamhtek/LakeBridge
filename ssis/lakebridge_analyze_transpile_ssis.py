@@ -39,13 +39,6 @@ def process_sql_files(converted_folder: Path, notebooks_folder: Path):
         with open(sql_file, "r", encoding="utf-8") as f:
             sql_content = f.read()
 
-        # Replacements
-        sql_content = sql_content.replace("edw.", "edp_datawarehouse_prd.")
-        sql_content = sql_content.replace("isdelete = 0", "etl_is_active = 1")
-        sql_content = sql_content.replace("IsDelete = 0", "etl_is_active = 1")
-        sql_content = sql_content.replace("isdelete=0", "etl_is_active = 1")
-        sql_content = sql_content.replace("finacle.", "edp_bfil_prod.finacle.")
-
         # Format SQL
         sql_content = sqlparse.format(sql_content, reindent=True, keyword_case="upper")
 
