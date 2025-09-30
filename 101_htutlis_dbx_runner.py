@@ -232,8 +232,8 @@ def main():
             writer.writerow([
                 file_name,
                 analyzer_status_dict.get(file_name, "Failed"),
-                transpile_status_dict.get(file_name, "Failed"),
-                post_process_dict.get(file_name, "Failed")
+                transpile_status_dict.get(file_name, "Failed")
+                # post_process_dict.get(file_name, "Failed")
             ])
     print(f"\nAll tasks completed. Summary CSV saved at {summary_file}")
 
