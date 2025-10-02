@@ -5,4 +5,7 @@ dialect: "Synapse"
 profile: "lakebridge"
 debug: false
 run_validation: true
+# new flags
+run_analyzer: true
+run_transpiler: true
 
