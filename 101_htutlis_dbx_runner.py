@@ -82,13 +82,6 @@ def process_sql_files(converted_folder: Path, notebooks_folder: Path, metadata_f
             with open(sql_file, "r", encoding="utf-8", errors="replace") as f:
                 sql_content = f.read()
             
-            # 🔄 Replace patterns
-            # sql_content = sql_content.replace("edw.", "edp_datawarehouse_prd.")
-            # sql_content = sql_content.replace("isdelete = 0", "etl_is_active = 1")
-            # sql_content = sql_content.replace("IsDelete = 0", "etl_is_active = 1")
-            # sql_content = sql_content.replace("isdelete=0", "etl_is_active = 1")
-            # sql_content = sql_content.replace("finacle.", "edp_bfil_prod.finacle.")
-
             # 🎨 Format SQL
             sql_content = sqlparse.format(sql_content, reindent=True, keyword_case="upper")
 
@@ -150,6 +143,14 @@ def main():
     debug = config.get("debug", False)
     run_validation = config.get("run_validation", True)
 
+    # <<< ADDED
+    run_analyzer = config.get("run_analyzer", True)
+    run_transpiler = config.get("run_transpiler", True)
+    if not run_analyzer and not run_transpiler:
+        print("\n⚠️ Nothing to run. Both run_analyzer and run_transpiler are set to False in config.")
+        sys.exit(0)
+    # <<< END ADDED
+
     ts_folder = datetime.now().strftime("%Y%m%d")
     metadata_folder = target_path / "metadata" / ts_folder
     ensure_dirs(metadata_folder)
@@ -176,15 +177,16 @@ def main():
     # -------------------------
     analyzer_status_dict = {}
     try:
-        analyze_cmd_parts = [
-            "databricks labs lakebridge analyze",
-            f'--source-directory "{source_path}"',
-            f'--report-file "{analyzer_report_file}"',
-            f'--source-tech {dialect}',
-        ] + global_flags
-        run_cmd(" ".join(analyze_cmd_parts), "Lakebridge Analyze", log_file=log_file)
-        for sql_file in source_path.glob("*.sql"):
-            analyzer_status_dict[sql_file.name] = "Success"
+        if run_analyzer:  # <<< ADDED
+            analyze_cmd_parts = [
+                "databricks labs lakebridge analyze",
+                f'--source-directory "{source_path}"',
+                f'--report-file "{analyzer_report_file}"',
+                f'--source-tech {dialect}',
+            ] + global_flags
+            run_cmd(" ".join(analyze_cmd_parts), "Lakebridge Analyze", log_file=log_file)
+            for sql_file in source_path.glob("*.sql"):
+                analyzer_status_dict[sql_file.name] = "Success"
     except Exception as e:
         logging.error(f"Analyzer failed: {e}")
         for sql_file in source_path.glob("*.sql"):
@@ -197,27 +199,27 @@ def main():
     ensure_dirs(converted_folder)
 
     transpile_status_dict = {}
-    print("\nStarting transpile per SQL file...")
-    for sql_file in source_path.glob("*.sql"):
-        try:
-            transpile_cmd_parts = [
-                "databricks labs lakebridge transpile",
-                f'--input-source "{sql_file}"',
-                f'--source-dialect {dialect.lower()}',
-                f'--output-folder "{converted_folder}"',
-            ] + global_flags
-            success = run_cmd(" ".join(transpile_cmd_parts), f"Transpile {sql_file.name}", log_file=log_file, ignore_failure=True)
-            transpile_status_dict[sql_file.name] = "Success" if success else "Failed"
-        except Exception as e:
-            logging.error(f"Transpile failed for {sql_file.name}: {e}")
-            transpile_status_dict[sql_file.name] = "Failed"
+    if run_transpiler:  # <<< ADDED
+        print("\nStarting transpile per SQL file...")
+        for sql_file in source_path.glob("*.sql"):
+            try:
+                transpile_cmd_parts = [
+                    "databricks labs lakebridge transpile",
+                    f'--input-source "{sql_file}"',
+                    f'--source-dialect {dialect.lower()}',
+                    f'--output-folder "{converted_folder}"',
+                ] + global_flags
+                success = run_cmd(" ".join(transpile_cmd_parts), f"Transpile {sql_file.name}", log_file=log_file, ignore_failure=True)
+                transpile_status_dict[sql_file.name] = "Success" if success else "Failed"
+            except Exception as e:
+                logging.error(f"Transpile failed for {sql_file.name}: {e}")
+                transpile_status_dict[sql_file.name] = "Failed"
 
     # -------------------------
     # 3️⃣ Post-process SQL + generate notebooks
     # -------------------------
     notebooks_folder = target_path / "Databricks_Notebooks"
-    post_process_summary = process_sql_files(converted_folder, notebooks_folder, metadata_folder)
-    # post_process_summary has only 'Succeeded/Failed' for post-processing step
+    post_process_summary = process_sql_files(converted_folder, notebooks_folder, metadata_folder) if run_transpiler else []  # <<< ADDED
 
     # -------------------------
     # 4️⃣ Write combined CSV summary
@@ -231,9 +233,9 @@ def main():
         for file_name in all_files:
             writer.writerow([
                 file_name,
-                analyzer_status_dict.get(file_name, "Failed"),
-                transpile_status_dict.get(file_name, "Failed")
-                # post_process_dict.get(file_name, "Failed")
+                analyzer_status_dict.get(file_name, "Skipped" if not run_analyzer else "Failed"),  # <<< ADDED
+                transpile_status_dict.get(file_name, "Skipped" if not run_transpiler else "Failed"),  # <<< ADDED
+                post_process_dict.get(file_name, "Skipped" if not run_transpiler else "Failed"),  # <<< ADDED
             ])
     print(f"\nAll tasks completed. Summary CSV saved at {summary_file}")
 
@@ -241,4 +243,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
