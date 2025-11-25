@@ -4,16 +4,18 @@ import subprocess
 import sys
 import logging
 import yaml
+import os
 import os  #  Added
 from pathlib import Path
 from datetime import datetime
 import sqlparse
 import csv
-import urllib.request  # >>> Added
-
+import urllib.request
+from bteq_preprocessor import preprocess_bteq_files
+import importlib.util
 
 # -------------------------
-# Setup Logging (file only)
+# Setup Logging
 # -------------------------
 def setup_logging(metadata_folder: Path):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -21,13 +23,10 @@ def setup_logging(metadata_folder: Path):
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-        ],
+        handlers=[logging.FileHandler(log_file, encoding="utf-8")],
     )
     logging.info(f"Logging initialized. Log file: {log_file}")
     return log_file
-
 
 # -------------------------
 # Utility functions
@@ -36,10 +35,8 @@ def check_cli():
     if shutil.which("databricks") is None:
         sys.exit("ERROR: 'databricks' CLI not found in PATH. Install/configure it and try again.")
 
-
 def ensure_dirs(folder: Path):
     folder.mkdir(parents=True, exist_ok=True)
-
 
 def run_cmd(cmd_str: str, title: str, log_file=None, ignore_failure=False):
     print(f"\n=== {title} ===")
@@ -64,13 +61,11 @@ def run_cmd(cmd_str: str, title: str, log_file=None, ignore_failure=False):
             sys.exit(msg)
         return False
 
-
 def validate_input_folder(source_path: Path):
     if not source_path.exists():
         sys.exit(f"ERROR: source path not found: {source_path}")
     if not any(source_path.glob("*.sql")):
         print(f"WARNING: No .sql files found in {source_path}")
-
 
 # -------------------------
 # SQL Post-processing + notebooks
@@ -122,9 +117,8 @@ def process_sql_files(converted_folder: Path, notebooks_folder: Path, metadata_f
 
     return summary
 
-
 # -----------------------------------------------
-#  LakeBridge Folder Structure Initialization
+# LakeBridge Folder Structure Initialization
 # -----------------------------------------------
 def create_initial_structure(root_dir: Path = Path("lakebridge")):
     supported_dialects = [
@@ -149,11 +143,22 @@ def create_initial_structure(root_dir: Path = Path("lakebridge")):
     print("Converted scripts will appear under lakebridge/output/<dialect>/")
     print("Then re-run: python runner.py\n")
 
-
 def is_first_time_setup():
     root_dir = Path("lakebridge")
     return not root_dir.exists() or not any(root_dir.iterdir())
 
+# -------------------------
+# Dynamically import a script and run its 'run()'
+# -------------------------
+def import_run_module(file_name: str):
+    file_path = Path(file_name).with_suffix(".py").resolve()
+    spec = importlib.util.spec_from_file_location(file_path.stem, file_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if hasattr(module, "run"):
+        module.run()
+    else:
+        print(f" {file_name} has no 'run()' function. Skipping.")
 
 # -------------------------
 # Main function
@@ -179,24 +184,44 @@ def main():
         print("Setup complete. Exiting now so you can place your SQL scripts.")
         sys.exit(0)
 
-    dialect = config["dialect"]
-    source_root = Path(config["source_path"])
-    target_root = Path(config["target_path"])
+    dialect = config["dialect"].strip().lower()
 
-    # Normalize dialect name (lowercase and underscore-safe)
-    dialect_folder = dialect.strip().lower().replace(" ", "_")
+    # -------------------------
+    # SSIS workflow
+    # -------------------------
+    if dialect == "ssis":
+        print("\n SSIS workflow detected. Running 4 SSIS scripts in order...")
 
-    # Dynamically build full paths
-    source_path = source_root / dialect_folder
-    target_path = target_root / dialect_folder
+        ssis_scripts = [
+            "ssis/01_unzip_ispac_dtsx",
+            "ssis/02_lakebridge_analyze_transpile_ssis",
+            "ssis/03_extract_sql_from_excel",
+            "ssis/04_transpile_ssis_output"
+        ]
 
+        for script in ssis_scripts:
+            import_run_module(script)
+
+        print("\n SSIS workflow completed successfully!")
+        sys.exit(0)
+
+    # -------------------------
+    # Non-SSIS workflow
+    # -------------------------
+    source_root = Path(config.get("source_path", "lakebridge/input"))
+    target_root = Path(config.get("target_path", "lakebridge/output"))
+
+    if dialect == "teradata":
+        preprocess_bteq_files()
+
+    source_path = source_root / dialect
+    target_path = target_root / dialect
     print(f"\n Using source folder: {source_path}")
     print(f" Using target folder: {target_path}")
 
     profile = config.get("profile")
     debug = config.get("debug", False)
     run_validation = config.get("run_validation", True)
-
     run_analyzer = config.get("run_analyzer", True)
     run_transpiler = config.get("run_transpiler", True)
     if not run_analyzer and not run_transpiler:
@@ -213,17 +238,16 @@ def main():
     if run_validation:
         validate_input_folder(source_path)
 
+    # ---- Analyzer
     analyzer_output_folder = target_path / "analyzer_output"
     ensure_dirs(analyzer_output_folder)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     analyzer_report_file = analyzer_output_folder / f"lakebridge_analysis_{ts}.xlsx"
-
     global_flags = []
     if profile:
         global_flags += ["-p", profile]
     if debug:
         global_flags += ["--debug"]
-
     analyzer_status_dict = {}
     try:
         if run_analyzer:
@@ -241,9 +265,9 @@ def main():
         for sql_file in source_path.glob("*.sql"):
             analyzer_status_dict[sql_file.name] = "Failed"
 
+    # ---- Transpiler
     converted_folder = target_path / "Converted_Code"
     ensure_dirs(converted_folder)
-
     transpile_status_dict = {}
     if run_transpiler:
         print("\nStarting transpile per SQL file...")
@@ -262,9 +286,9 @@ def main():
                 logging.error(f"Transpile failed for {sql_file.name}: {e}")
                 transpile_status_dict[sql_file.name] = "Failed"
 
+    # ---- Post-processing + summary
     notebooks_folder = target_path / "Databricks_Notebooks"
     post_process_summary = process_sql_files(converted_folder, notebooks_folder, metadata_folder) if run_transpiler else []
-
     summary_file = metadata_folder / f"sql_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     with open(summary_file, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
@@ -280,7 +304,6 @@ def main():
             ])
     print(f"\nAll tasks completed. Summary CSV saved at {summary_file}")
     sys.exit(0)
-
 
 # -------------------------
 # Entry Point with CURL logic
